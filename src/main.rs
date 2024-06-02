@@ -32,7 +32,7 @@ impl EventHandler for Handler {
 
     async fn message(&self, ctx: Context, msg: Message) {
         //Only correct authorised users.
-        if is_authorized_user(&msg.author).await {
+        if is_willing_user(&msg.author).await {
             //Message to be sent to the user
             let mut response_message = String::new();
 
@@ -136,7 +136,7 @@ impl EventHandler for Handler {
     }
 }
 
-async fn is_authorized_user(usr: &User) -> bool {
+async fn is_willing_user(usr: &User) -> bool {
     //Read config file
     let user_array: json::Value = json::from_str(
         &fs::read_to_string("./authorized_users")
