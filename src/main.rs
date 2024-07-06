@@ -35,9 +35,7 @@ impl EventHandler for Handler {
         if is_willing_user(&msg.author).await {
             //Message to be sent to the user
             let mut response_message = String::new();
-            //A vector to store the matches
 
-            //Grammar pass
             //Make http request to local LanguageTools server and parse it to json.
             let response: json::Value = json::from_str(
                 &reqwest::get(format!(
@@ -53,22 +51,26 @@ impl EventHandler for Handler {
             .expect("Could not parse LanguageTool response as json.");
 
             let mut grammar_matches: Vec<json::Value> = Vec::new();
+            let mut unfiltered_spelling_matches: Vec<json::Value> = Vec::new();
+            let mut spelling_matches: Vec<json::Value> = Vec::new();
 
             let matches = response["matches"].as_array().unwrap();
-            //Copy all elements that don't relate to spelling into the grammar_matches vector.
+            //Seperate grammar and spelling mistakes.
             for mistake in matches {
                 if mistake["rule"]["issueType"] != "misspelling" {
                     grammar_matches.push(mistake.clone());
+                } else {
+                    unfiltered_spelling_matches.push(mistake.clone());
                 }
             }
 
-            //Spelling pass
-            let mut spelling_matches: Vec<json::Value> = Vec::new();
-            //Split every word in the message to process it individually.
-            let words: Vec<&str> = msg.content.split_whitespace().collect();
-            //Send request to LanguageTools for every word.
-            for word in words {
-                let mut word = word.to_string();
+            //Filter spelling mistakes.
+            for mistake in &unfiltered_spelling_matches {
+                let context = mistake["context"]["text"].as_str().unwrap();
+                let index = mistake["context"]["offset"].as_u64().unwrap() as usize;
+                let length = mistake["context"]["length"].as_u64().unwrap() as usize;
+                let mut word = context[index..(index + length)].to_string();
+
                 //Remove period.
                 let period_index = word.find(".");
                 if let Some(u) = period_index {
@@ -83,33 +85,17 @@ impl EventHandler for Handler {
                 //French quotes are not considered because they would be a pain, considering they
                 //need to be preceeded and followed by spaces. That being said, borrowed words
                 //should be italicized anyway.
-                println!("{}", word);
-                if (word.starts_with("\"") && word.ends_with("\""))
-                    || (word.starts_with("*") && word.ends_with("*"))
-                {
-                    continue;
-                }
-                //Make http request to local LanguageTools server and parse it to json.
-                let response: json::Value = json::from_str(
-                    &reqwest::get(format!(
-                        "http://localhost:8081/v2/check?language={}&text={}",
-                        "fr-CA", word
-                    ))
-                    .await
-                    .expect("LanguageTool request failed")
-                    .text()
-                    .await
-                    .unwrap(),
-                )
-                .expect("Could not parse LanguageTool response as json.");
-
-                let matches = response["matches"].as_array().unwrap();
-                //Copy all elements that relate to spelling into the spelling_matches vector.
-                for mistake in matches {
-                    if mistake["rule"]["issueType"] == "misspelling" {
-                        spelling_matches.push(mistake.clone());
+                let preceeding_char = context.chars().nth(index - 1);
+                let following_char = context.chars().nth(index + length);
+                if preceeding_char.is_some() && following_char.is_some() {
+                    if (preceeding_char.unwrap() == '"' && following_char.unwrap() == '"')
+                        || (preceeding_char.unwrap() == '*' && following_char.unwrap() == '*')
+                    {
+                        continue;
                     }
                 }
+                //Add the filtered mistake to spelling_matches.
+                spelling_matches.push(mistake.clone());
             }
 
             //Only do stuff if mistakes were found.
