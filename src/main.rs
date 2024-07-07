@@ -51,51 +51,53 @@ impl EventHandler for Handler {
             .expect("Could not parse LanguageTool response as json.");
 
             let mut grammar_matches: Vec<json::Value> = Vec::new();
-            let mut unfiltered_spelling_matches: Vec<json::Value> = Vec::new();
             let mut spelling_matches: Vec<json::Value> = Vec::new();
 
             let matches = response["matches"].as_array().unwrap();
             //Seperate grammar and spelling mistakes.
             for mistake in matches {
                 if mistake["rule"]["issueType"] != "misspelling" {
-                    grammar_matches.push(mistake.clone());
-                } else {
-                    unfiltered_spelling_matches.push(mistake.clone());
-                }
-            }
-
-            //Filter spelling mistakes.
-            for mistake in &unfiltered_spelling_matches {
-                let context = mistake["context"]["text"].as_str().unwrap();
-                let index = mistake["context"]["offset"].as_u64().unwrap() as usize;
-                let length = mistake["context"]["length"].as_u64().unwrap() as usize;
-                let mut word = context[index..(index + length)].to_string();
-
-                //Remove period.
-                let period_index = word.find(".");
-                if let Some(u) = period_index {
-                    word.remove(u);
-                }
-
-                //Ignore proper nouns.
-                if word.starts_with(|c: char| c.is_uppercase()) {
-                    continue;
-                }
-                //Ignore words that are surrounded by quotes or asterisks.
-                //French quotes are not considered because they would be a pain, considering they
-                //need to be preceeded and followed by spaces. That being said, borrowed words
-                //should be italicized anyway.
-                let preceeding_char = context.chars().nth(index - 1);
-                let following_char = context.chars().nth(index + length);
-                if preceeding_char.is_some() && following_char.is_some() {
-                    if (preceeding_char.unwrap() == '"' && following_char.unwrap() == '"')
-                        || (preceeding_char.unwrap() == '*' && following_char.unwrap() == '*')
+                    //Filter grammar matches.
+                    //Tolerate french Canadian punctuation.
+                    if mistake["message"] == "Les deux-points sont précédés d’une espace insécable."
                     {
                         continue;
                     }
+                    grammar_matches.push(mistake.clone());
+                } else {
+                    //Filter spelling mistakes.
+                    let context = mistake["context"]["text"].as_str().unwrap();
+                    let index = mistake["context"]["offset"].as_u64().unwrap() as usize;
+                    let length = mistake["context"]["length"].as_u64().unwrap() as usize;
+                    let mut word = context[index..(index + length)].to_string();
+
+                    //Remove period.
+                    let period_index = word.find(".");
+                    if let Some(u) = period_index {
+                        word.remove(u);
+                    }
+
+                    //Ignore proper nouns.
+                    if word.starts_with(|c: char| c.is_uppercase()) {
+                        continue;
+                    }
+                    //Ignore words that are surrounded by quotes or asterisks.
+                    //French quotes are not considered because they would be a pain, considering they
+                    //need to be preceeded and followed by spaces. That being said, borrowed words
+                    //should be italicized anyway.
+                    let preceeding_char = context.chars().nth(index - 1);
+                    let following_char = context.chars().nth(index + length);
+                    if preceeding_char.is_some() && following_char.is_some() {
+                        if (preceeding_char.unwrap() == '"' && following_char.unwrap() == '"')
+                            || (preceeding_char.unwrap() == '*' && following_char.unwrap() == '*')
+                        {
+                            continue;
+                        }
+                    }
+
+                    //Add the filtered mistake to spelling_matches.
+                    spelling_matches.push(mistake.clone());
                 }
-                //Add the filtered mistake to spelling_matches.
-                spelling_matches.push(mistake.clone());
             }
 
             //Only do stuff if mistakes were found.
