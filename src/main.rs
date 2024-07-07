@@ -15,9 +15,9 @@ impl EventHandler for Handler {
         //Register commands
         let builder = CreateCommand::new("grammar_enable")
             .description("Enable grammar policing for yourself and only yourself.");
-        model::application::Command::create_global_command(&ctx, builder)
-            .await
-            .unwrap();
+
+        let _ = model::application::Command::create_global_command(&ctx, builder).await;
+
         let builder = CreateCommand::new("grammar_add_word")
             .description("Add word to dictionary.")
             .add_option(CreateCommandOption::new(
@@ -25,30 +25,52 @@ impl EventHandler for Handler {
                 "word",
                 "Word to add to dictionary.",
             ));
-        model::application::Command::create_global_command(&ctx, builder)
-            .await
-            .unwrap();
+
+        let _ = model::application::Command::create_global_command(&ctx, builder).await;
     }
 
     async fn message(&self, ctx: Context, msg: Message) {
         //Only correct authorised users.
-        if is_willing_user(&msg.author).await {
+        if match is_willing_user(&msg.author).await {
+            Ok(x) => x,
+            Err(e) => {
+                println!("{e}");
+                return;
+            }
+        } {
             //Message to be sent to the user
             let mut response_message = String::new();
 
             //Make http request to local LanguageTools server and parse it to json.
-            let response: json::Value = json::from_str(
-                &reqwest::get(format!(
-                    "http://localhost:8081/v2/check?language={}&text={}",
-                    "fr-CA", msg.content
-                ))
-                .await
-                .expect("LanguageTool request failed")
-                .text()
-                .await
-                .unwrap(),
-            )
-            .expect("Could not parse LanguageTool response as json.");
+            let response = match match reqwest::get(format!(
+                "http://localhost:8081/v2/check?language={}&text={}",
+                "fr-CA", msg.content
+            ))
+            .await
+            {
+                Ok(x) => x,
+                Err(e) => {
+                    println!("LanguageTool request failed. {e}");
+                    return;
+                }
+            }
+            .text()
+            .await
+            {
+                Ok(x) => x,
+                Err(e) => {
+                    println!("{e}");
+                    return;
+                }
+            };
+
+            let response: json::Value = match json::from_str(&response) {
+                Ok(x) => x,
+                Err(e) => {
+                    println!("Could not parse LanguageTool response as json. {e}");
+                    return;
+                }
+            };
 
             let mut grammar_matches: Vec<json::Value> = Vec::new();
             let mut spelling_matches: Vec<json::Value> = Vec::new();
@@ -156,7 +178,9 @@ impl EventHandler for Handler {
                 );
 
                 //Send response text
-                msg.reply(&ctx, response_message).await.unwrap();
+                if let Err(e) = msg.reply(&ctx, response_message).await {
+                    println!("Could not send discord message.{e}");
+                };
             }
         }
     }
@@ -166,22 +190,43 @@ impl EventHandler for Handler {
         if let Interaction::Command(command) = interaction {
             if command.data.name == "grammar_enable" {
                 //Open configuration file.
-                let mut user_array: json::Value = json::from_str(
-                    &fs::read_to_string("./authorized_users")
-                        .await
-                        .expect("Could not read users file."),
-                )
-                .expect("Could not parse users file.");
+                let user_array = match fs::read_to_string("./authorized_users").await {
+                    Ok(x) => x,
+                    Err(e) => {
+                        println!("Could not read users file. {e}");
+                        return;
+                    }
+                };
+                let mut user_array: json::Value = match json::from_str(&user_array) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        println!("Could not parse users file. {e}");
+                        return;
+                    }
+                };
                 //Append user to array.
-                user_array
-                    .as_array_mut()
-                    .unwrap()
-                    .push(command.user.id.get().into());
+                match user_array.as_array_mut() {
+                    Some(x) => x,
+                    None => return,
+                }
+                .push(command.user.id.get().into());
                 //Write data to file
-                fs::write("./authorized_users", json::to_string(&user_array).unwrap())
-                    .await
-                    .expect("Could not write into users file.");
-                command
+                match fs::write(
+                    "./authorized_users",
+                    match json::to_string(&user_array) {
+                        Ok(x) => x,
+                        Err(_) => return,
+                    },
+                )
+                .await
+                {
+                    Ok(x) => x,
+                    Err(e) => {
+                        println!("Could not write into users file. {e}");
+                        return;
+                    }
+                }
+                let _ = command
                     .create_response(
                         &ctx,
                         CreateInteractionResponse::Message(
@@ -190,12 +235,11 @@ impl EventHandler for Handler {
                                 .ephemeral(true),
                         ),
                     )
-                    .await
-                    .unwrap();
+                    .await;
             }
             if command.data.name == "grammar_add_word" {
                 //TODO: Add word to LanguageTool dictionary.
-                command
+                let _ = command
                     .create_response(
                         &ctx,
                         CreateInteractionResponse::Message(
@@ -204,25 +248,26 @@ impl EventHandler for Handler {
                                 .ephemeral(true),
                         ),
                     )
-                    .await
-                    .unwrap();
+                    .await;
             }
         }
     }
 }
 
-async fn is_willing_user(usr: &User) -> bool {
+async fn is_willing_user(usr: &User) -> Result<bool, std::io::Error> {
     //Read config file
-    let user_array: json::Value = json::from_str(
-        &fs::read_to_string("./authorized_users")
-            .await
-            .expect("Could not read users file."),
-    )
-    .expect("Could not parse users file.");
-    user_array
-        .as_array()
-        .unwrap()
-        .contains(&usr.id.get().into())
+    let user_array: json::Value = json::from_str(&fs::read_to_string("./authorized_users").await?)?;
+    Ok(match user_array.as_array() {
+        Some(x) => x,
+        //Default to returning false if there was a problem with reading the user array.
+        None => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "The user file does not contain a json array.",
+            ))
+        }
+    }
+    .contains(&usr.id.get().into()))
 }
 
 #[tokio::main]
