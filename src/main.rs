@@ -34,7 +34,7 @@ impl EventHandler for Handler {
         if match is_willing_user(&msg.author).await {
             Ok(x) => x,
             Err(e) => {
-                println!("{e}");
+                eprintln!("{e}");
                 return;
             }
         } {
@@ -50,7 +50,7 @@ impl EventHandler for Handler {
             {
                 Ok(x) => x,
                 Err(e) => {
-                    println!("LanguageTool request failed. {e}");
+                    eprintln!("LanguageTool request failed. {e}");
                     return;
                 }
             }
@@ -59,7 +59,7 @@ impl EventHandler for Handler {
             {
                 Ok(x) => x,
                 Err(e) => {
-                    println!("{e}");
+                    eprintln!("{e}");
                     return;
                 }
             };
@@ -67,7 +67,7 @@ impl EventHandler for Handler {
             let response: json::Value = match json::from_str(&response) {
                 Ok(x) => x,
                 Err(e) => {
-                    println!("Could not parse LanguageTool response as json. {e}");
+                    eprintln!("Could not parse LanguageTool response as json. {e}");
                     return;
                 }
             };
@@ -179,7 +179,7 @@ impl EventHandler for Handler {
 
                 //Send response text
                 if let Err(e) = msg.reply(&ctx, response_message).await {
-                    println!("Could not send discord message.{e}");
+                    eprintln!("Could not send discord message.{e}");
                 };
             }
         }
@@ -193,14 +193,14 @@ impl EventHandler for Handler {
                 let user_array = match fs::read_to_string("./authorized_users").await {
                     Ok(x) => x,
                     Err(e) => {
-                        println!("Could not read users file. {e}");
+                        eprintln!("Could not read users file. {e}");
                         return;
                     }
                 };
                 let mut user_array: json::Value = match json::from_str(&user_array) {
                     Ok(x) => x,
                     Err(e) => {
-                        println!("Could not parse users file. {e}");
+                        eprintln!("Could not parse users file. {e}");
                         return;
                     }
                 };
@@ -222,7 +222,7 @@ impl EventHandler for Handler {
                 {
                     Ok(x) => x,
                     Err(e) => {
-                        println!("Could not write into users file. {e}");
+                        eprintln!("Could not write into users file. {e}");
                         return;
                     }
                 }
@@ -282,6 +282,6 @@ async fn main() {
         .expect("Could not create client");
 
     if let Err(why) = client.start().await {
-        println!("Client error: {why:?}");
+        eprintln!("Client error: {why:?}");
     }
 }
