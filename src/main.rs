@@ -211,7 +211,7 @@ impl EventHandler for Handler {
                 }
                 .push(command.user.id.get().into());
                 //Write data to file
-                match fs::write(
+                if let Err(e) = fs::write(
                     "./authorized_users",
                     match json::to_string(&user_array) {
                         Ok(x) => x,
@@ -220,11 +220,8 @@ impl EventHandler for Handler {
                 )
                 .await
                 {
-                    Ok(x) => x,
-                    Err(e) => {
-                        eprintln!("Could not write into users file. {e}");
-                        return;
-                    }
+                    eprintln!("Could not write into users file. {e}");
+                    return;
                 }
                 let _ = command
                     .create_response(
