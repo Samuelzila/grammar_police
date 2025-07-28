@@ -89,11 +89,11 @@ impl EventHandler for Handler {
                 } else {
                     //Filter spelling mistakes.
                     let context = mistake["context"]["text"].as_str().unwrap();
-                    let index = (mistake["context"]["offset"].as_u64().unwrap() + 1) as usize;
+                    let index = (mistake["context"]["offset"].as_u64().unwrap()) as usize;
                     let length = mistake["context"]["length"].as_u64().unwrap() as usize;
                     let mut word = context[index..(index + length - 1)].to_string();
 
-                    //Remove period.
+                    //Remove period, if any.
                     let period_index = word.find(".");
                     if let Some(u) = period_index {
                         word.remove(u);
