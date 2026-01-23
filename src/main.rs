@@ -115,13 +115,15 @@ impl EventHandler for Handler {
                 //French quotes are not considered because they would be a pain, considering they
                 //need to be preceeded and followed by spaces. That being said, borrowed words
                 //should be italicized anyway.
-                let preceeding_char = context.chars().nth(index - 1);
-                let following_char = context.chars().nth(index + length);
-                if preceeding_char.is_some() && following_char.is_some() {
-                    if (preceeding_char.unwrap() == '"' && following_char.unwrap() == '"')
-                        || (preceeding_char.unwrap() == '*' && following_char.unwrap() == '*')
-                    {
-                        continue;
+                if index != 0 && (index + length) < context.len() {
+                    let preceeding_char = context.chars().nth(index - 1);
+                    let following_char = context.chars().nth(index + length);
+                    if preceeding_char.is_some() && following_char.is_some() {
+                        if (preceeding_char.unwrap() == '"' && following_char.unwrap() == '"')
+                            || (preceeding_char.unwrap() == '*' && following_char.unwrap() == '*')
+                        {
+                            continue;
+                        }
                     }
                 }
 
