@@ -31,157 +31,163 @@ impl EventHandler for Handler {
 
     async fn message(&self, ctx: Context, msg: Message) {
         //Only correct authorised users.
-        if match is_willing_user(&msg.author).await {
+        if !(match is_willing_user(&msg.author).await {
             Ok(x) => x,
             Err(e) => {
                 eprintln!("{e}");
                 return;
             }
-        } {
-            //Message to be sent to the user
-            let mut response_message = String::new();
+        }) {
+            return;
+        }
+        // If authorized, proceed with correction.
+        //If the message starts with /, assume it is a command.
+        if msg.content.starts_with('/') {
+            return;
+        }
 
-            //Make http request to local LanguageTools server and parse it to json.
-            let response = match match reqwest::get(format!(
-                "http://localhost:8081/v2/check?language={}&text={}",
-                "fr-CA", msg.content
-            ))
-            .await
-            {
-                Ok(x) => x,
-                Err(e) => {
-                    eprintln!("LanguageTool request failed. {e}");
-                    return;
-                }
+        //Message to be sent to the user
+        let mut response_message = String::new();
+
+        //Make http request to local LanguageTools server and parse it to json.
+        let response = match match reqwest::get(format!(
+            "http://localhost:8081/v2/check?language={}&text={}",
+            "fr-CA", msg.content
+        ))
+        .await
+        {
+            Ok(x) => x,
+            Err(e) => {
+                eprintln!("LanguageTool request failed. {e}");
+                return;
             }
-            .text()
-            .await
-            {
-                Ok(x) => x,
-                Err(e) => {
-                    eprintln!("{e}");
-                    return;
+        }
+        .text()
+        .await
+        {
+            Ok(x) => x,
+            Err(e) => {
+                eprintln!("{e}");
+                return;
+            }
+        };
+
+        let response: json::Value = match json::from_str(&response) {
+            Ok(x) => x,
+            Err(e) => {
+                eprintln!("Could not parse LanguageTool response as json. {e}");
+                return;
+            }
+        };
+
+        let mut grammar_matches: Vec<json::Value> = Vec::new();
+        let mut spelling_matches: Vec<json::Value> = Vec::new();
+
+        let matches = response["matches"].as_array().unwrap();
+        //Seperate grammar and spelling mistakes.
+        for mistake in matches {
+            if mistake["rule"]["issueType"] != "misspelling" {
+                //Filter grammar matches.
+                //Tolerate french Canadian punctuation.
+                if mistake["message"] == "Les deux-points sont précédés d’une espace insécable."
+                {
+                    continue;
                 }
-            };
+                grammar_matches.push(mistake.clone());
+            } else {
+                //Filter spelling mistakes.
+                let context = mistake["context"]["text"].as_str().unwrap();
+                let index = (mistake["context"]["offset"].as_u64().unwrap()) as usize;
+                let length = mistake["context"]["length"].as_u64().unwrap() as usize;
+                let mut word = context[index..(index + length - 1)].to_string();
 
-            let response: json::Value = match json::from_str(&response) {
-                Ok(x) => x,
-                Err(e) => {
-                    eprintln!("Could not parse LanguageTool response as json. {e}");
-                    return;
+                //Remove period, if any.
+                let period_index = word.find(".");
+                if let Some(u) = period_index {
+                    word.remove(u);
                 }
-            };
 
-            let mut grammar_matches: Vec<json::Value> = Vec::new();
-            let mut spelling_matches: Vec<json::Value> = Vec::new();
-
-            let matches = response["matches"].as_array().unwrap();
-            //Seperate grammar and spelling mistakes.
-            for mistake in matches {
-                if mistake["rule"]["issueType"] != "misspelling" {
-                    //Filter grammar matches.
-                    //Tolerate french Canadian punctuation.
-                    if mistake["message"] == "Les deux-points sont précédés d’une espace insécable."
+                //Ignore proper nouns.
+                if word.starts_with(|c: char| c.is_uppercase()) {
+                    continue;
+                }
+                //Ignore words that are surrounded by quotes or asterisks.
+                //French quotes are not considered because they would be a pain, considering they
+                //need to be preceeded and followed by spaces. That being said, borrowed words
+                //should be italicized anyway.
+                let preceeding_char = context.chars().nth(index - 1);
+                let following_char = context.chars().nth(index + length);
+                if preceeding_char.is_some() && following_char.is_some() {
+                    if (preceeding_char.unwrap() == '"' && following_char.unwrap() == '"')
+                        || (preceeding_char.unwrap() == '*' && following_char.unwrap() == '*')
                     {
                         continue;
                     }
-                    grammar_matches.push(mistake.clone());
-                } else {
-                    //Filter spelling mistakes.
-                    let context = mistake["context"]["text"].as_str().unwrap();
-                    let index = (mistake["context"]["offset"].as_u64().unwrap()) as usize;
-                    let length = mistake["context"]["length"].as_u64().unwrap() as usize;
-                    let mut word = context[index..(index + length - 1)].to_string();
+                }
 
-                    //Remove period, if any.
-                    let period_index = word.find(".");
-                    if let Some(u) = period_index {
-                        word.remove(u);
-                    }
+                //Add the filtered mistake to spelling_matches.
+                spelling_matches.push(mistake.clone());
+            }
+        }
 
-                    //Ignore proper nouns.
-                    if word.starts_with(|c: char| c.is_uppercase()) {
-                        continue;
-                    }
-                    //Ignore words that are surrounded by quotes or asterisks.
-                    //French quotes are not considered because they would be a pain, considering they
-                    //need to be preceeded and followed by spaces. That being said, borrowed words
-                    //should be italicized anyway.
-                    let preceeding_char = context.chars().nth(index - 1);
-                    let following_char = context.chars().nth(index + length);
-                    if preceeding_char.is_some() && following_char.is_some() {
-                        if (preceeding_char.unwrap() == '"' && following_char.unwrap() == '"')
-                            || (preceeding_char.unwrap() == '*' && following_char.unwrap() == '*')
-                        {
-                            continue;
-                        }
-                    }
+        //Only do stuff if mistakes were found.
+        if grammar_matches.len() + spelling_matches.len() != 0 {
+            //Manage matches and generate response text.
+            response_message.push_str("Halte-là !\n\n");
 
-                    //Add the filtered mistake to spelling_matches.
-                    spelling_matches.push(mistake.clone());
+            //Generate grammar corrections
+            for mistake in grammar_matches {
+                response_message.push_str(&format!(
+                    "« {} ». {}\n",
+                    mistake["context"]["text"].as_str().unwrap(),
+                    mistake["message"].as_str().unwrap()
+                ));
+
+                let replacements = mistake["replacements"].as_array().unwrap();
+                if replacements.len() != 0 {
+                    response_message.push_str("Voici des corrections possibles:\n");
+                    for i in 0..3.min(replacements.len()) {
+                        response_message.push_str(&format!(
+                            "- « {} »\n",
+                            replacements[i]["value"].as_str().unwrap()
+                        ));
+                    }
                 }
             }
 
-            //Only do stuff if mistakes were found.
-            if grammar_matches.len() + spelling_matches.len() != 0 {
-                //Manage matches and generate response text.
-                response_message.push_str("Halte-là !\n\n");
+            //Generate spelling corrections
+            for mistake in spelling_matches {
+                response_message.push_str(&format!(
+                    "Le mot « {} » n'est pas reconnu.\n",
+                    mistake["context"]["text"].as_str().unwrap()[(mistake["context"]["offset"]
+                        .as_u64()
+                        .unwrap()
+                        as usize)
+                        ..((mistake["context"]["offset"].as_u64().unwrap()
+                            + mistake["context"]["length"].as_u64().unwrap())
+                            as usize)]
+                        .to_string()
+                ));
 
-                //Generate grammar corrections
-                for mistake in grammar_matches {
-                    response_message.push_str(&format!(
-                        "« {} ». {}\n",
-                        mistake["context"]["text"].as_str().unwrap(),
-                        mistake["message"].as_str().unwrap()
-                    ));
-
-                    let replacements = mistake["replacements"].as_array().unwrap();
-                    if replacements.len() != 0 {
-                        response_message.push_str("Voici des corrections possibles:\n");
-                        for i in 0..3.min(replacements.len()) {
-                            response_message.push_str(&format!(
-                                "- « {} »\n",
-                                replacements[i]["value"].as_str().unwrap()
-                            ));
-                        }
+                let replacements = mistake["replacements"].as_array().unwrap();
+                if replacements.len() != 0 {
+                    response_message.push_str("Voici des corrections possibles:\n");
+                    for i in 0..3.min(replacements.len()) {
+                        response_message.push_str(&format!(
+                            "- « {} »\n",
+                            replacements[i]["value"].as_str().unwrap()
+                        ));
                     }
                 }
-
-                //Generate spelling corrections
-                for mistake in spelling_matches {
-                    response_message.push_str(&format!(
-                        "Le mot « {} » n'est pas reconnu.\n",
-                        mistake["context"]["text"].as_str().unwrap()[(mistake["context"]["offset"]
-                            .as_u64()
-                            .unwrap()
-                            as usize)
-                            ..((mistake["context"]["offset"].as_u64().unwrap()
-                                + mistake["context"]["length"].as_u64().unwrap())
-                                as usize)]
-                            .to_string()
-                    ));
-
-                    let replacements = mistake["replacements"].as_array().unwrap();
-                    if replacements.len() != 0 {
-                        response_message.push_str("Voici des corrections possibles:\n");
-                        for i in 0..3.min(replacements.len()) {
-                            response_message.push_str(&format!(
-                                "- « {} »\n",
-                                replacements[i]["value"].as_str().unwrap()
-                            ));
-                        }
-                    }
-                }
-
-                response_message.push_str(
-                    "\nComme toujours, c'est un plaisir d'assurer la sécurité de la langue.",
-                );
-
-                //Send response text
-                if let Err(e) = msg.reply(&ctx, response_message).await {
-                    eprintln!("Could not send discord message.{e}");
-                };
             }
+
+            response_message
+                .push_str("\nComme toujours, c'est un plaisir d'assurer la sécurité de la langue.");
+
+            //Send response text
+            if let Err(e) = msg.reply(&ctx, response_message).await {
+                eprintln!("Could not send discord message.{e}");
+            };
         }
     }
 
