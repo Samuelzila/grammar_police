@@ -7,6 +7,7 @@ use serenity::model::channel::Message;
 use serenity::prelude::*;
 use serenity::{async_trait, model};
 use tokio::fs;
+use unicode_segmentation::UnicodeSegmentation;
 
 struct Handler;
 #[async_trait]
@@ -89,7 +90,13 @@ impl EventHandler for Handler {
             let context = mistake["context"]["text"].as_str().unwrap();
             let index = (mistake["context"]["offset"].as_u64().unwrap()) as usize;
             let length = mistake["context"]["length"].as_u64().unwrap() as usize;
-            let mut word = context[index..(index + length - 1)].to_string();
+            let mut word = context.graphemes(true);
+            // Skip graphemes until offset, then take the next "length" graphemes to get the full
+            // word.
+            if index != 0 {
+                word.nth(index - 1);
+            }
+            let mut word = word.take(length).collect::<String>();
 
             if mistake["rule"]["issueType"] != "misspelling" {
                 //Filter grammar matches.
@@ -101,19 +108,21 @@ impl EventHandler for Handler {
 
                 //Ignore emojis (surounded by columns).
                 if mistake["message"] == "Une espace est requise." {
-                    let mut char_iter = context.chars();
+                    let mut char_iter = context.graphemes(true);
                     //Skip chars until offset
-                    char_iter.nth(index - 1);
+                    if index != 0 {
+                        char_iter.nth(index - 1);
+                    }
                     if let Some(c) = char_iter.next() {
-                        if c == ':' {
+                        if c == ":" {
                             //Read next word (until whitespace)
                             while let Some(c) = char_iter.next() {
                                 //If we encounter whitespace, the it was a genuine mistake
-                                if c == ' ' {
+                                if c == " " {
                                     break;
                                 }
                                 //If we encounter another ":", then the word was most likely an emoji. We ignore it.
-                                if c == ':' {
+                                if c == ":" {
                                     continue 'mistake_loop;
                                 }
                             }
@@ -140,11 +149,11 @@ impl EventHandler for Handler {
                 //need to be preceeded and followed by spaces. That being said, borrowed words
                 //should be italicized anyway.
                 if index != 0 && (index + length) < context.len() {
-                    let preceeding_char = context.chars().nth(index - 1);
-                    let following_char = context.chars().nth(index + length);
+                    let preceeding_char = context.graphemes(true).nth(index - 1);
+                    let following_char = context.graphemes(true).nth(index + length);
                     if preceeding_char.is_some() && following_char.is_some() {
-                        if (preceeding_char.unwrap() == '"' && following_char.unwrap() == '"')
-                            || (preceeding_char.unwrap() == '*' && following_char.unwrap() == '*')
+                        if (preceeding_char.unwrap() == "\"" && following_char.unwrap() == "\"")
+                            || (preceeding_char.unwrap() == "*" && following_char.unwrap() == "*")
                         {
                             continue;
                         }
