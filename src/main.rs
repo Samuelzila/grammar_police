@@ -85,7 +85,12 @@ impl EventHandler for Handler {
 
         let matches = response["matches"].as_array().unwrap();
         //Seperate grammar and spelling mistakes.
-        for mistake in matches {
+        'mistake_loop: for mistake in matches {
+            let context = mistake["context"]["text"].as_str().unwrap();
+            let index = (mistake["context"]["offset"].as_u64().unwrap()) as usize;
+            let length = mistake["context"]["length"].as_u64().unwrap() as usize;
+            let mut word = context[index..(index + length - 1)].to_string();
+
             if mistake["rule"]["issueType"] != "misspelling" {
                 //Filter grammar matches.
                 //Tolerate french Canadian punctuation.
@@ -93,13 +98,32 @@ impl EventHandler for Handler {
                 {
                     continue;
                 }
+
+                //Ignore emojis (surounded by columns).
+                if mistake["message"] == "Une espace est requise." {
+                    let mut char_iter = context.chars();
+                    //Skip chars until offset
+                    char_iter.nth(index - 1);
+                    if let Some(c) = char_iter.next() {
+                        if c == ':' {
+                            //Read next word (until whitespace)
+                            while let Some(c) = char_iter.next() {
+                                //If we encounter whitespace, the it was a genuine mistake
+                                if c == ' ' {
+                                    break;
+                                }
+                                //If we encounter another ":", then the word was most likely an emoji. We ignore it.
+                                if c == ':' {
+                                    continue 'mistake_loop;
+                                }
+                            }
+                        }
+                    }
+                }
+
                 grammar_matches.push(mistake.clone());
             } else {
                 //Filter spelling mistakes.
-                let context = mistake["context"]["text"].as_str().unwrap();
-                let index = (mistake["context"]["offset"].as_u64().unwrap()) as usize;
-                let length = mistake["context"]["length"].as_u64().unwrap() as usize;
-                let mut word = context[index..(index + length - 1)].to_string();
 
                 //Remove period, if any.
                 let period_index = word.find(".");
