@@ -102,6 +102,8 @@ impl EventHandler for Handler {
                 //Filter grammar matches.
                 //Tolerate french Canadian punctuation.
                 if mistake["message"] == "Les deux-points sont précédés d’une espace insécable."
+                    || mistake["message"]
+                        == "Le point-virgule est précédé d’une espace fine insécable."
                 {
                     continue;
                 }
