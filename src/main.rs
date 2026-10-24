@@ -98,6 +98,54 @@ impl EventHandler for Handler {
             }
             let mut word = word.take(length).collect::<String>();
 
+            //If the mistake is a the begining of a message, it might be a command. Ignore it.
+            // We still check it is not a capitalisation mistake.
+            if index == 0 && mistake["rule"]["id"] != "UPPERCASE_SENTENCE_START" {
+                //Empty the mistake vectors
+                grammar_matches.clear();
+                spelling_matches.clear();
+
+                //We break here because if we suspect a command, all the other mistakes would be
+                //parameters of the command, and we don't want to correct those either.
+                //TODO: We should find a way to check if the word is actually a command.
+                break;
+            }
+
+            //Ignore emojis (surounded by columns).
+            {
+                let mut char_iter = context.graphemes(true);
+                //Skip chars until offset -1 (so we can check the char before the word).
+                if index > 1 {
+                    char_iter.nth(index - 2);
+                }
+                let mut check_emoji = true;
+                // Check if either the char before or at the start of the word is a colon.
+                if let Some(c) = char_iter.next() {
+                    if c != ":" {
+                        if let Some(c) = char_iter.next() {
+                            if c != ":" {
+                                check_emoji = false;
+                            }
+                        }
+                    }
+                    // If either char is a colon, then we check if the next char after the word is a
+                    // colon. If it is, then we ignore the mistake, as it is most likely an emoji.
+                    if check_emoji {
+                        //Read next word (until whitespace)
+                        while let Some(c) = char_iter.next() {
+                            //If we encounter whitespace, the it was a genuine mistake
+                            if c == " " {
+                                break;
+                            }
+                            //If we encounter another ":", then the word was most likely an emoji. We ignore it.
+                            if c == ":" {
+                                continue 'mistake_loop;
+                            }
+                        }
+                    }
+                }
+            }
+
             if mistake["rule"]["issueType"] != "misspelling" {
                 //Filter grammar matches.
                 //Tolerate french Canadian punctuation.
@@ -108,29 +156,6 @@ impl EventHandler for Handler {
                     continue;
                 }
 
-                //Ignore emojis (surounded by columns).
-                if mistake["message"] == "Une espace est requise." {
-                    let mut char_iter = context.graphemes(true);
-                    //Skip chars until offset
-                    if index != 0 {
-                        char_iter.nth(index - 1);
-                    }
-                    if let Some(c) = char_iter.next() {
-                        if c == ":" {
-                            //Read next word (until whitespace)
-                            while let Some(c) = char_iter.next() {
-                                //If we encounter whitespace, the it was a genuine mistake
-                                if c == " " {
-                                    break;
-                                }
-                                //If we encounter another ":", then the word was most likely an emoji. We ignore it.
-                                if c == ":" {
-                                    continue 'mistake_loop;
-                                }
-                            }
-                        }
-                    }
-                }
 
                 grammar_matches.push(mistake.clone());
             } else {
